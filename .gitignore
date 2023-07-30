@@ -1,0 +1,10 @@
+.idea/
+.DS_Store
+*.gif
+*.png
+*.pth
+*.npy
+*.pyc
+*.pickle
+*.csv
+*.zip
