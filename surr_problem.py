@@ -64,11 +64,9 @@ class RBFModel(SurrogateModel):
     def fit(self, X: np.ndarray, F: np.ndarray, G: np.ndarray):
 
         for i in range(self.n_obj):
-            print('n_obj', i)
             self.F_rbf[i].fit(X, F[:, i])
 
         for i in range(self.n_ieq_constr):
-            print('n_con', i)
             self.G_rbf[i].fit(X, G[:, i])
 
     # def fit(self, X: np.ndarray, F: np.ndarray, G: np.ndarray):

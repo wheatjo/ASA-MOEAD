@@ -4,6 +4,18 @@ import numpy as np
 from pymoo.core.population import Population
 from pymoo.algorithms.soo.nonconvex.de import DE
 from pymoo.problems.multi.mw import MW9
+from pymoo.core.repair import Repair
+
+
+
+
+def DecRepair(problem, X):
+    xl = problem.xl
+    xu = problem.xu
+    X = np.where(X < xl, xl, X)
+    X = np.where(X > xu, xu, X)
+    return X
+
 
 
 class FROFI(GeneticAlgorithm):
@@ -40,7 +52,7 @@ class FROFI(GeneticAlgorithm):
         off_dec = np.copy(X)
         off_dec[k1] = X[k1] + Rand[k1] * (P1[k1] - X[k1]) + F[k1] * (P2[k1] - P3[k1])
         off_dec[k2] = P1[k2] + Rand[k2] * (PB[k2] - P1[k2]) + F[k2] * (P2[k2] - P3[k2])
-
+        off_dec = DecRepair(self.problem, off_dec)
         return Population.new(X=off_dec)
 
     def _advance(self, infills=None, **kwargs):
@@ -85,6 +97,7 @@ class FROFI(GeneticAlgorithm):
             offDec = pop[np.random.randint(len(pop))].get('X')
             k = np.random.randint(problem.n_var)
             offDec[k] = np.random.uniform(problem.xl[k], problem.xu[k])
+            offDec = DecRepair(problem, offDec)
             off = Population.new(X=offDec[None, :])
             self.evaluator.eval(problem, off)
             worst = np.argmax(pop.get('cv'))

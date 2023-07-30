@@ -22,6 +22,7 @@ from pymoo.algorithms.soo.nonconvex.de import mut_binomial
 from frofi import FROFI, FitnessSingle
 from pymoo.optimize import minimize
 from pymoo.core.evaluator import Evaluator
+from frofi import DecRepair
 
 
 class NeighborhoodSelection(Selection):
@@ -117,10 +118,12 @@ class ASAMOEAD(GeneticAlgorithm):
 
         for ref_id, ref_dir_i in enumerate(self.ref_dirs):
             unique_index = np.unique(self.Archive.get('X'), axis=0, return_index=True)[1]
-            print(unique_index, len(unique_index), len(self.Archive))
+            print(len(unique_index), len(self.Archive))
             pop_data = self.Archive[unique_index]
             self.surr_model.fit(pop_data.get('X'), pop_data.get('F'), pop_data.get('G'))
-
+            pop_F = self.pop.get('F')
+            pop_index = calc_ref_assign(pop_F, self.ref_dirs)
+            self.ref_pop = pop_index
             ref_i_pop = self.pop[self.ref_pop == ref_id]
             if len(ref_i_pop) == 0:
                 opt_state = 's1'
@@ -138,27 +141,43 @@ class ASAMOEAD(GeneticAlgorithm):
                 self.Archive = Population.merge(self.Archive, cand)
             elif opt_state == 's2':
                 cand = self.fdls(ref_id)
-                print(cand.get('X'))
+                print('fdls', cand.get('X'))
                 self.evaluator.eval(self.problem, cand)
                 self.Archive = Population.merge(self.Archive, cand)
             else:
                 cand = self.cdls(ref_id)
-                print(cand.get('X'))
+                print('cdls', cand.get('X'))
                 self.evaluator.eval(self.problem, cand)
                 self.Archive = Population.merge(self.Archive, cand)
 
+            self.update_pop(ref_id, cand)
 
             if self.judge_use_aiss(cand):
                 cand_assis = self.AISS(ref_id, self.v1)
                 self.evaluator.eval(self.problem, cand_assis)
                 self.Archive = Population.merge(self.Archive, cand_assis)
+                self.update_pop(ref_id, cand_assis)
 
-            self.pop = RankAndCrowdingSurvival().do(self.problem, self.Archive, n_survive=self.pop_size)
-            # judge terminal
+
+    def update_pop(self, ref_id, cand):
+        pop_ref_id = self.pop[self.neighbors[ref_id]]
+        pop_ref_id_F = pop_ref_id.get('F')
+        pop_ref_id_cv = pop_ref_id.get('cv')
+        cand_F = cand.get('F')[0]
+        cand_cv = cand.get('cv')
+        pop_decomp_F = self.decomposition.do(pop_ref_id_F, self.ref_dirs[self.neighbors[ref_id], :])
+        cand_decmop_F = self.decomposition.do(cand_F, self.ref_dirs[self.neighbors[ref_id], :])
+        replace_index_cv = pop_ref_id_cv > cand_cv
+        replace_index_f = np.logical_and(cand_decmop_F < pop_decomp_F, np.logical_and(pop_ref_id_cv <= 0, cand_cv <= 0))
+        replace_index = np.logical_or(replace_index_f, replace_index_cv)
+        try:
+            self.pop[self.neighbors[ref_id][replace_index][:2]] = cand
+        except IndexError:
+            print(replace_index)
 
 
     def fdls(self, ref_id):
-        opt_pro = SurrProblemFDLS(self.problem.n_var, 1, self.problem.n_ieq_constr, self.surr_model,
+        opt_pro = SurrProblemFDLS(self.problem.n_var, 1, 1, self.surr_model,
                                   xl=self.problem.xl, xu=self.problem.xu, ref_inner=self.ref_dirs[self.neighbors[ref_id]],
                                   ref_outer=self.ref_dirs[self.neighbors_outer[ref_id]])
 
@@ -166,16 +185,12 @@ class ASAMOEAD(GeneticAlgorithm):
         Evaluator().eval(opt_pro, fdls_init_pop)
         opt_alg = FROFI(sampling=fdls_init_pop, pop_size=50)
         res = minimize(opt_pro, opt_alg, termination=('n_eval', 8000))
-        print("fdls res X", res.X)
+        # print("fdls res X", res.X)
         res_pop_fitness = FitnessSingle(res.pop)
         sel_index = np.argmin(res_pop_fitness)
         cand_sel = res.pop[sel_index]
         cand_sel_x = cand_sel.get('X')
-        # if len(res.X.shape) > 1:
-        #     cand_sel_x = res.X[0]
-        # else:
-        #     cand_sel_x = res.X
-        # print('fdls cand sel X:', cand_sel_x)
+        cand_sel_x = DecRepair(self.problem, cand_sel_x)
         return Population.new(X=cand_sel_x[None, :])
 
     def cdls(self, ref_id):
@@ -187,11 +202,12 @@ class ASAMOEAD(GeneticAlgorithm):
         opt_alg = FROFI(sampling=cdls_init_pop, pop_size=50)
         res = minimize(opt_pro, opt_alg, termination=('n_eval', 8000))
 
-        print("cdls res X", res.X)
+        # print("cdls res X", res.X)
         res_pop_fitness = FitnessSingle(res.pop)
         sel_index = np.argmin(res_pop_fitness)
         cand_sel = res.pop[sel_index]
         cand_sel_x = cand_sel.get('X')
+        cand_sel_x = DecRepair(self.problem, cand_sel_x)
         return Population.new(X=cand_sel_x[None, :])
 
     # use index choose neighborhood population
@@ -281,8 +297,9 @@ class ASAMOEAD(GeneticAlgorithm):
         else:
             cand_cv = pop_cand.get('cv')
             cand_sel = pop_cand[np.argmin(cand_cv)]
-        print('ddgs cand X', cand_sel.get('X'))
-        return Population.new(X=cand_sel.get('X')[None, :])
+        # print('ddgs cand X', cand_sel.get('X'))
+        X_repair = DecRepair(self.problem, cand_sel.get('X'))
+        return Population.new(X=X_repair[None, :])
 
 
     def AISS(self, ref_id, v1):
@@ -336,7 +353,9 @@ class ASAMOEAD(GeneticAlgorithm):
             uncertain.append(cand_uncertain)
 
         aiss_cand_x = cand_pop_x[np.argmax(uncertain)]
-        return Population.new(X=aiss_cand_x[None, :])
+        X_repair = DecRepair(self.problem, aiss_cand_x)
+        return Population.new(X=X_repair[None, :])
+
 
 
     def judge_use_aiss(self, offspring):
